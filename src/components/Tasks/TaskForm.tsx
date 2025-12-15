@@ -27,6 +27,7 @@ export function TaskForm() {
   const [lastCompleted, setLastCompleted] = useState('');
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (existingTask) {
@@ -62,10 +63,12 @@ export function TaskForm() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validate()) return;
+
+    setIsSaving(true);
 
     const taskData = {
       name: name.trim(),
@@ -77,18 +80,23 @@ export function TaskForm() {
       lastCompleted: lastCompleted || undefined,
     };
 
-    if (isEditing && existingTask) {
-      updateTask({
-        ...existingTask,
-        ...taskData,
-      });
-      showToast('Task updated');
-    } else {
-      addTask(taskData);
-      showToast('Task created');
+    try {
+      if (isEditing && existingTask) {
+        await updateTask({
+          ...existingTask,
+          ...taskData,
+        });
+        showToast('Task updated');
+      } else {
+        await addTask(taskData);
+        showToast('Task created');
+      }
+      navigate(-1);
+    } catch (error) {
+      showToast('Failed to save task', 'error');
+    } finally {
+      setIsSaving(false);
     }
-
-    navigate(-1);
   };
 
   const frequencyOptions = Object.entries(FREQUENCY_LABELS).map(([value, label]) => ({
@@ -201,11 +209,11 @@ export function TaskForm() {
         )}
 
         <div className="flex justify-end gap-3 pt-4">
-          <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
+          <Button type="button" variant="secondary" onClick={() => navigate(-1)} disabled={isSaving}>
             Cancel
           </Button>
-          <Button type="submit">
-            {isEditing ? 'Save Changes' : 'Create Task'}
+          <Button type="submit" disabled={isSaving}>
+            {isSaving ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Task'}
           </Button>
         </div>
       </form>

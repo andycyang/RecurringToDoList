@@ -1,13 +1,18 @@
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { TaskProvider } from './context/TaskContext';
 import { ToastProvider } from './context/ToastContext';
 import { ToastContainer } from './components/common/Toast';
+import { AuthForm } from './components/Auth/AuthForm';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { TaskList } from './components/Tasks/TaskList';
 import { TaskForm } from './components/Tasks/TaskForm';
 import { TaskDetail } from './components/Tasks/TaskDetail';
+import { Button } from './components/common/Button';
 
 function Layout({ children }: { children: React.ReactNode }) {
+  const { user, signOut } = useAuth();
+
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200">
@@ -44,6 +49,12 @@ function Layout({ children }: { children: React.ReactNode }) {
               >
                 All Tasks
               </Link>
+              <div className="flex items-center gap-3 ml-4 pl-4 border-l border-gray-200">
+                <span className="text-sm text-gray-500">{user?.email}</span>
+                <Button variant="ghost" size="sm" onClick={signOut}>
+                  Sign Out
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -53,22 +64,47 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AppContent() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthForm />;
+  }
+
+  return (
+    <TaskProvider>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/tasks" element={<TaskList />} />
+          <Route path="/tasks/new" element={<TaskForm />} />
+          <Route path="/tasks/:taskId" element={<TaskDetail />} />
+          <Route path="/tasks/:taskId/edit" element={<TaskForm />} />
+        </Routes>
+      </Layout>
+      <ToastContainer />
+    </TaskProvider>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
-        <TaskProvider>
-          <Layout>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/tasks" element={<TaskList />} />
-              <Route path="/tasks/new" element={<TaskForm />} />
-              <Route path="/tasks/:taskId" element={<TaskDetail />} />
-              <Route path="/tasks/:taskId/edit" element={<TaskForm />} />
-            </Routes>
-          </Layout>
-          <ToastContainer />
-        </TaskProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
       </ToastProvider>
     </BrowserRouter>
   );

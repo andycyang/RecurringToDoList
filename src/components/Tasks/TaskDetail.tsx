@@ -19,6 +19,8 @@ export function TaskDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [completionDate, setCompletionDate] = useState(getTodayString());
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const task = taskId ? getTaskById(taskId) : null;
   const completions = taskId ? getCompletionsByTaskId(taskId) : [];
@@ -38,26 +40,46 @@ export function TaskDetail() {
 
   const status = getTaskStatus(task.nextDue);
 
-  const handleQuickComplete = () => {
-    const record = completeTask(task.id);
-    showToast('Task completed!', 'success', () => {
-      undoCompletion(task.id, record.id);
-    });
+  const handleQuickComplete = async () => {
+    setIsCompleting(true);
+    try {
+      const record = await completeTask(task.id);
+      showToast('Task completed!', 'success', () => {
+        undoCompletion(task.id, record.id);
+      });
+    } catch (error) {
+      showToast('Failed to complete task', 'error');
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
-  const handleDateComplete = () => {
-    const record = completeTask(task.id, completionDate);
-    setShowDatePicker(false);
-    setCompletionDate(getTodayString());
-    showToast('Task completed!', 'success', () => {
-      undoCompletion(task.id, record.id);
-    });
+  const handleDateComplete = async () => {
+    setIsCompleting(true);
+    try {
+      const record = await completeTask(task.id, completionDate);
+      setShowDatePicker(false);
+      setCompletionDate(getTodayString());
+      showToast('Task completed!', 'success', () => {
+        undoCompletion(task.id, record.id);
+      });
+    } catch (error) {
+      showToast('Failed to complete task', 'error');
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
-  const handleDelete = () => {
-    deleteTask(task.id);
-    showToast('Task deleted');
-    navigate('/');
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    try {
+      await deleteTask(task.id);
+      showToast('Task deleted');
+      navigate('/');
+    } catch (error) {
+      showToast('Failed to delete task', 'error');
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -90,13 +112,13 @@ export function TaskDetail() {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setShowDatePicker(true)}>
+            <Button variant="ghost" size="sm" onClick={() => setShowDatePicker(true)} disabled={isCompleting}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </Button>
-            <Button size="sm" onClick={handleQuickComplete}>
-              Complete
+            <Button size="sm" onClick={handleQuickComplete} disabled={isCompleting}>
+              {isCompleting ? 'Saving...' : 'Complete'}
             </Button>
           </div>
         </div>
@@ -133,8 +155,8 @@ export function TaskDetail() {
           <Link to={`/tasks/${task.id}/edit`}>
             <Button variant="secondary">Edit Task</Button>
           </Link>
-          <Button variant="danger" onClick={() => setShowDeleteConfirm(true)}>
-            Delete Task
+          <Button variant="danger" onClick={() => setShowDeleteConfirm(true)} disabled={isDeleting}>
+            {isDeleting ? 'Deleting...' : 'Delete Task'}
           </Button>
         </div>
       </div>
@@ -198,7 +220,9 @@ export function TaskDetail() {
           <Button variant="secondary" onClick={() => setShowDatePicker(false)}>
             Cancel
           </Button>
-          <Button onClick={handleDateComplete}>Mark Complete</Button>
+          <Button onClick={handleDateComplete} disabled={isCompleting}>
+            {isCompleting ? 'Saving...' : 'Mark Complete'}
+          </Button>
         </div>
       </Modal>
     </div>

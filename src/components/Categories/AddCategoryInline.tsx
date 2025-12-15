@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useTasks } from '../../context/TaskContext';
+import { useToast } from '../../context/ToastContext';
 import { Button } from '../common/Button';
 import { Input } from '../common/Input';
 
 interface AddCategoryInlineProps {
-  onAdd: (categoryId: string) => void;
+  onAdd?: (categoryId: string) => void;
   onCancel: () => void;
 }
 
@@ -19,20 +20,28 @@ const PRESET_COLORS = [
   '#f97316', // orange
 ];
 
-export function AddCategoryInline({ onAdd, onCancel }: AddCategoryInlineProps) {
-  const { addCategory, categories } = useTasks();
+export function AddCategoryInline({ onCancel }: AddCategoryInlineProps) {
+  const { addCategory } = useTasks();
+  const { showToast } = useToast();
   const [name, setName] = useState('');
   const [color, setColor] = useState(PRESET_COLORS[0]);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim()) return;
 
-    addCategory(name.trim(), color);
-    const newCategory = categories.find((c) => c.name === name.trim());
-    if (newCategory) {
-      onAdd(newCategory.id);
+    setIsSaving(true);
+    try {
+      await addCategory(name.trim(), color);
+      showToast('Category added');
+      // Note: We can't get the new category ID here since it's created on the server
+      // The parent will need to refresh or we close without selecting
+      onCancel();
+    } catch (error) {
+      showToast('Failed to add category', 'error');
+    } finally {
+      setIsSaving(false);
     }
-    onCancel();
   };
 
   return (
@@ -63,11 +72,11 @@ export function AddCategoryInline({ onAdd, onCancel }: AddCategoryInlineProps) {
         </div>
       </div>
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={isSaving}>
           Cancel
         </Button>
-        <Button size="sm" onClick={handleSubmit} disabled={!name.trim()}>
-          Add Category
+        <Button size="sm" onClick={handleSubmit} disabled={!name.trim() || isSaving}>
+          {isSaving ? 'Adding...' : 'Add Category'}
         </Button>
       </div>
     </div>

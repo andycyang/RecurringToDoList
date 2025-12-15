@@ -1,36 +1,28 @@
 import {
   createContext,
   useContext,
-  useReducer,
+  useState,
   useEffect,
   ReactNode,
   useCallback,
 } from 'react';
-import { Task, CompletionRecord, Category, AppData } from '../types';
-import { loadAppData, saveAppData } from '../utils/storage';
+import { Task, CompletionRecord, Category } from '../types';
+import { supabase } from '../lib/supabase';
+import { useAuth } from './AuthContext';
 import { calculateNextDue, getTodayString } from '../utils/dateUtils';
-
-type Action =
-  | { type: 'LOAD_DATA'; payload: AppData }
-  | { type: 'ADD_TASK'; payload: Task }
-  | { type: 'UPDATE_TASK'; payload: Task }
-  | { type: 'DELETE_TASK'; payload: string }
-  | { type: 'COMPLETE_TASK'; payload: { taskId: string; completedAt: string; notes?: string } }
-  | { type: 'UNDO_COMPLETION'; payload: { taskId: string; recordId: string } }
-  | { type: 'ADD_CATEGORY'; payload: Category }
-  | { type: 'DELETE_CATEGORY'; payload: string };
 
 interface TaskContextType {
   tasks: Task[];
   completionRecords: CompletionRecord[];
   categories: Category[];
-  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'nextDue'>) => void;
-  updateTask: (task: Task) => void;
-  deleteTask: (taskId: string) => void;
-  completeTask: (taskId: string, completedAt?: string, notes?: string) => CompletionRecord;
-  undoCompletion: (taskId: string, recordId: string) => void;
-  addCategory: (name: string, color: string) => void;
-  deleteCategory: (categoryId: string) => void;
+  loading: boolean;
+  addTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'nextDue'>) => Promise<void>;
+  updateTask: (task: Task) => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
+  completeTask: (taskId: string, completedAt?: string, notes?: string) => Promise<CompletionRecord>;
+  undoCompletion: (taskId: string, recordId: string) => Promise<void>;
+  addCategory: (name: string, color: string) => Promise<void>;
+  deleteCategory: (categoryId: string) => Promise<void>;
   getTaskById: (taskId: string) => Task | undefined;
   getCompletionsByTaskId: (taskId: string) => CompletionRecord[];
   getCategoryById: (categoryId: string) => Category | undefined;
@@ -38,69 +30,222 @@ interface TaskContextType {
 
 const TaskContext = createContext<TaskContextType | null>(null);
 
-function taskReducer(state: AppData, action: Action): AppData {
-  switch (action.type) {
-    case 'LOAD_DATA':
-      return action.payload;
+// Convert database row to app types (snake_case to camelCase)
+function dbToTask(row: Record<string, unknown>): Task {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: row.description as string | undefined,
+    frequency: row.frequency as Task['frequency'],
+    customIntervalDays: row.custom_interval_days as number | undefined,
+    categoryId: row.category_id as string | undefined,
+    firstDueDate: row.first_due_date as string,
+    lastCompleted: row.last_completed as string | undefined,
+    nextDue: row.next_due as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
 
-    case 'ADD_TASK':
-      return {
-        ...state,
-        tasks: [...state.tasks, action.payload],
-      };
+function dbToCompletionRecord(row: Record<string, unknown>): CompletionRecord {
+  return {
+    id: row.id as string,
+    taskId: row.task_id as string,
+    completedAt: row.completed_at as string,
+    recordedAt: row.recorded_at as string,
+    notes: row.notes as string | undefined,
+  };
+}
 
-    case 'UPDATE_TASK':
-      return {
-        ...state,
-        tasks: state.tasks.map((t) =>
-          t.id === action.payload.id ? action.payload : t
-        ),
-      };
+function dbToCategory(row: Record<string, unknown>): Category {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    color: row.color as string,
+    isDefault: row.is_default as boolean,
+  };
+}
 
-    case 'DELETE_TASK':
-      return {
-        ...state,
-        tasks: state.tasks.filter((t) => t.id !== action.payload),
-        completionRecords: state.completionRecords.filter(
-          (r) => r.taskId !== action.payload
-        ),
-      };
+export function TaskProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [completionRecords, setCompletionRecords] = useState<CompletionRecord[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    case 'COMPLETE_TASK': {
-      const { taskId, completedAt, notes } = action.payload;
-      const task = state.tasks.find((t) => t.id === taskId);
-      if (!task) return state;
-
-      const newRecord: CompletionRecord = {
-        id: crypto.randomUUID(),
-        taskId,
-        completedAt,
-        recordedAt: new Date().toISOString(),
-        notes,
-      };
-
-      const nextDue = calculateNextDue(completedAt, task.frequency, task.customIntervalDays);
-
-      return {
-        ...state,
-        tasks: state.tasks.map((t) =>
-          t.id === taskId
-            ? { ...t, lastCompleted: completedAt, nextDue, updatedAt: new Date().toISOString() }
-            : t
-        ),
-        completionRecords: [...state.completionRecords, newRecord],
-      };
+  // Load data when user changes
+  useEffect(() => {
+    if (!user) {
+      setTasks([]);
+      setCompletionRecords([]);
+      setCategories([]);
+      setLoading(false);
+      return;
     }
 
-    case 'UNDO_COMPLETION': {
-      const { taskId, recordId } = action.payload;
-      const task = state.tasks.find((t) => t.id === taskId);
-      if (!task) return state;
+    async function loadData() {
+      setLoading(true);
 
-      const remainingRecords = state.completionRecords.filter(
-        (r) => !(r.taskId === taskId && r.id === recordId)
+      const [tasksRes, completionsRes, categoriesRes] = await Promise.all([
+        supabase.from('tasks').select('*').order('next_due'),
+        supabase.from('completion_records').select('*').order('completed_at', { ascending: false }),
+        supabase.from('categories').select('*').order('name'),
+      ]);
+
+      if (tasksRes.data) setTasks(tasksRes.data.map(dbToTask));
+      if (completionsRes.data) setCompletionRecords(completionsRes.data.map(dbToCompletionRecord));
+      if (categoriesRes.data) setCategories(categoriesRes.data.map(dbToCategory));
+
+      setLoading(false);
+    }
+
+    loadData();
+  }, [user]);
+
+  const addTask = useCallback(
+    async (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'nextDue'>) => {
+      if (!user) return;
+
+      const nextDue = taskData.lastCompleted
+        ? calculateNextDue(taskData.lastCompleted, taskData.frequency, taskData.customIntervalDays)
+        : taskData.firstDueDate;
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .insert({
+          user_id: user.id,
+          name: taskData.name,
+          description: taskData.description || null,
+          frequency: taskData.frequency,
+          custom_interval_days: taskData.customIntervalDays || null,
+          category_id: taskData.categoryId || null,
+          first_due_date: taskData.firstDueDate,
+          last_completed: taskData.lastCompleted || null,
+          next_due: nextDue,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) setTasks((prev) => [...prev, dbToTask(data)]);
+    },
+    [user]
+  );
+
+  const updateTask = useCallback(
+    async (task: Task) => {
+      if (!user) return;
+
+      const nextDue = task.lastCompleted
+        ? calculateNextDue(task.lastCompleted, task.frequency, task.customIntervalDays)
+        : task.firstDueDate;
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({
+          name: task.name,
+          description: task.description || null,
+          frequency: task.frequency,
+          custom_interval_days: task.customIntervalDays || null,
+          category_id: task.categoryId || null,
+          first_due_date: task.firstDueDate,
+          last_completed: task.lastCompleted || null,
+          next_due: nextDue,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', task.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setTasks((prev) => prev.map((t) => (t.id === task.id ? dbToTask(data) : t)));
+      }
+    },
+    [user]
+  );
+
+  const deleteTask = useCallback(
+    async (taskId: string) => {
+      if (!user) return;
+
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+
+      if (error) throw error;
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      setCompletionRecords((prev) => prev.filter((r) => r.taskId !== taskId));
+    },
+    [user]
+  );
+
+  const completeTask = useCallback(
+    async (taskId: string, completedAt?: string, notes?: string): Promise<CompletionRecord> => {
+      if (!user) throw new Error('Not authenticated');
+
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) throw new Error('Task not found');
+
+      const dateUsed = completedAt || getTodayString();
+      const nextDue = calculateNextDue(dateUsed, task.frequency, task.customIntervalDays);
+
+      // Insert completion record
+      const { data: recordData, error: recordError } = await supabase
+        .from('completion_records')
+        .insert({
+          user_id: user.id,
+          task_id: taskId,
+          completed_at: dateUsed,
+          notes: notes || null,
+        })
+        .select()
+        .single();
+
+      if (recordError) throw recordError;
+
+      // Update task
+      const { error: taskError } = await supabase
+        .from('tasks')
+        .update({
+          last_completed: dateUsed,
+          next_due: nextDue,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', taskId);
+
+      if (taskError) throw taskError;
+
+      const newRecord = dbToCompletionRecord(recordData);
+      setCompletionRecords((prev) => [newRecord, ...prev]);
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, lastCompleted: dateUsed, nextDue, updatedAt: new Date().toISOString() } : t
+        )
       );
 
+      return newRecord;
+    },
+    [user, tasks]
+  );
+
+  const undoCompletion = useCallback(
+    async (taskId: string, recordId: string) => {
+      if (!user) return;
+
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+
+      // Delete the completion record
+      const { error: deleteError } = await supabase
+        .from('completion_records')
+        .delete()
+        .eq('id', recordId);
+
+      if (deleteError) throw deleteError;
+
+      // Find the new most recent completion
+      const remainingRecords = completionRecords.filter(
+        (r) => !(r.taskId === taskId && r.id === recordId)
+      );
       const taskRecords = remainingRecords
         .filter((r) => r.taskId === taskId)
         .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
@@ -110,156 +255,99 @@ function taskReducer(state: AppData, action: Action): AppData {
         ? calculateNextDue(mostRecentCompletion, task.frequency, task.customIntervalDays)
         : task.firstDueDate;
 
-      return {
-        ...state,
-        tasks: state.tasks.map((t) =>
+      // Update task
+      const { error: updateError } = await supabase
+        .from('tasks')
+        .update({
+          last_completed: mostRecentCompletion || null,
+          next_due: nextDue,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', taskId);
+
+      if (updateError) throw updateError;
+
+      setCompletionRecords(remainingRecords);
+      setTasks((prev) =>
+        prev.map((t) =>
           t.id === taskId
-            ? {
-                ...t,
-                lastCompleted: mostRecentCompletion,
-                nextDue,
-                updatedAt: new Date().toISOString(),
-              }
+            ? { ...t, lastCompleted: mostRecentCompletion, nextDue, updatedAt: new Date().toISOString() }
             : t
-        ),
-        completionRecords: remainingRecords,
-      };
-    }
-
-    case 'ADD_CATEGORY':
-      return {
-        ...state,
-        categories: [...state.categories, action.payload],
-      };
-
-    case 'DELETE_CATEGORY':
-      return {
-        ...state,
-        categories: state.categories.filter((c) => c.id !== action.payload),
-        tasks: state.tasks.map((t) =>
-          t.categoryId === action.payload ? { ...t, categoryId: undefined } : t
-        ),
-      };
-
-    default:
-      return state;
-  }
-}
-
-export function TaskProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(taskReducer, {
-    schemaVersion: 1,
-    tasks: [],
-    completionRecords: [],
-    categories: [],
-  });
-
-  useEffect(() => {
-    const data = loadAppData();
-    dispatch({ type: 'LOAD_DATA', payload: data });
-  }, []);
-
-  useEffect(() => {
-    if (state.categories.length > 0 || state.tasks.length > 0) {
-      saveAppData(state);
-    }
-  }, [state]);
-
-  const addTask = useCallback(
-    (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'nextDue'>) => {
-      const now = new Date().toISOString();
-      const nextDue = taskData.lastCompleted
-        ? calculateNextDue(taskData.lastCompleted, taskData.frequency, taskData.customIntervalDays)
-        : taskData.firstDueDate;
-
-      const task: Task = {
-        ...taskData,
-        id: crypto.randomUUID(),
-        nextDue,
-        createdAt: now,
-        updatedAt: now,
-      };
-      dispatch({ type: 'ADD_TASK', payload: task });
+        )
+      );
     },
-    []
+    [user, tasks, completionRecords]
   );
 
-  const updateTask = useCallback((task: Task) => {
-    const nextDue = task.lastCompleted
-      ? calculateNextDue(task.lastCompleted, task.frequency, task.customIntervalDays)
-      : task.firstDueDate;
+  const addCategory = useCallback(
+    async (name: string, color: string) => {
+      if (!user) return;
 
-    dispatch({
-      type: 'UPDATE_TASK',
-      payload: { ...task, nextDue, updatedAt: new Date().toISOString() },
-    });
-  }, []);
+      const { data, error } = await supabase
+        .from('categories')
+        .insert({
+          user_id: user.id,
+          name,
+          color,
+          is_default: false,
+        })
+        .select()
+        .single();
 
-  const deleteTask = useCallback((taskId: string) => {
-    dispatch({ type: 'DELETE_TASK', payload: taskId });
-  }, []);
-
-  const completeTask = useCallback(
-    (taskId: string, completedAt?: string, notes?: string): CompletionRecord => {
-      const dateUsed = completedAt || getTodayString();
-      dispatch({
-        type: 'COMPLETE_TASK',
-        payload: { taskId, completedAt: dateUsed, notes },
-      });
-
-      return {
-        id: crypto.randomUUID(),
-        taskId,
-        completedAt: dateUsed,
-        recordedAt: new Date().toISOString(),
-        notes,
-      };
+      if (error) throw error;
+      if (data) setCategories((prev) => [...prev, dbToCategory(data)]);
     },
-    []
+    [user]
   );
 
-  const undoCompletion = useCallback((taskId: string, recordId: string) => {
-    dispatch({ type: 'UNDO_COMPLETION', payload: { taskId, recordId } });
-  }, []);
+  const deleteCategory = useCallback(
+    async (categoryId: string) => {
+      if (!user) return;
 
-  const addCategory = useCallback((name: string, color: string) => {
-    const category: Category = {
-      id: crypto.randomUUID(),
-      name,
-      color,
-      isDefault: false,
-    };
-    dispatch({ type: 'ADD_CATEGORY', payload: category });
-  }, []);
+      // First update tasks to remove this category
+      await supabase
+        .from('tasks')
+        .update({ category_id: null })
+        .eq('category_id', categoryId);
 
-  const deleteCategory = useCallback((categoryId: string) => {
-    dispatch({ type: 'DELETE_CATEGORY', payload: categoryId });
-  }, []);
+      // Then delete the category
+      const { error } = await supabase.from('categories').delete().eq('id', categoryId);
+
+      if (error) throw error;
+
+      setCategories((prev) => prev.filter((c) => c.id !== categoryId));
+      setTasks((prev) =>
+        prev.map((t) => (t.categoryId === categoryId ? { ...t, categoryId: undefined } : t))
+      );
+    },
+    [user]
+  );
 
   const getTaskById = useCallback(
-    (taskId: string) => state.tasks.find((t) => t.id === taskId),
-    [state.tasks]
+    (taskId: string) => tasks.find((t) => t.id === taskId),
+    [tasks]
   );
 
   const getCompletionsByTaskId = useCallback(
     (taskId: string) =>
-      state.completionRecords
+      completionRecords
         .filter((r) => r.taskId === taskId)
         .sort((a, b) => b.completedAt.localeCompare(a.completedAt)),
-    [state.completionRecords]
+    [completionRecords]
   );
 
   const getCategoryById = useCallback(
-    (categoryId: string) => state.categories.find((c) => c.id === categoryId),
-    [state.categories]
+    (categoryId: string) => categories.find((c) => c.id === categoryId),
+    [categories]
   );
 
   return (
     <TaskContext.Provider
       value={{
-        tasks: state.tasks,
-        completionRecords: state.completionRecords,
-        categories: state.categories,
+        tasks,
+        completionRecords,
+        categories,
+        loading,
         addTask,
         updateTask,
         deleteTask,
