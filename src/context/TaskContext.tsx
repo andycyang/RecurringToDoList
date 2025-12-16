@@ -38,6 +38,9 @@ function dbToTask(row: Record<string, unknown>): Task {
     description: row.description as string | undefined,
     frequency: row.frequency as Task['frequency'],
     customIntervalDays: row.custom_interval_days as number | undefined,
+    scheduleType: (row.schedule_type as Task['scheduleType']) || 'interval',
+    anchorPattern: row.anchor_pattern as Task['anchorPattern'] | undefined,
+    anchorDay: row.anchor_day as number | undefined,
     categoryId: row.category_id as string | undefined,
     firstDueDate: row.first_due_date as string,
     lastCompleted: row.last_completed as string | undefined,
@@ -107,8 +110,24 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       if (!user) return;
 
       const nextDue = taskData.lastCompleted
-        ? calculateNextDue(taskData.lastCompleted, taskData.frequency, taskData.customIntervalDays)
-        : taskData.firstDueDate;
+        ? calculateNextDue(
+            taskData.lastCompleted,
+            taskData.frequency,
+            taskData.scheduleType,
+            taskData.customIntervalDays,
+            taskData.anchorPattern,
+            taskData.anchorDay
+          )
+        : taskData.scheduleType === 'calendar' && taskData.anchorPattern
+          ? calculateNextDue(
+              getTodayString(),
+              taskData.frequency,
+              taskData.scheduleType,
+              taskData.customIntervalDays,
+              taskData.anchorPattern,
+              taskData.anchorDay
+            )
+          : taskData.firstDueDate;
 
       const { data, error } = await supabase
         .from('tasks')
@@ -118,6 +137,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           description: taskData.description || null,
           frequency: taskData.frequency,
           custom_interval_days: taskData.customIntervalDays || null,
+          schedule_type: taskData.scheduleType,
+          anchor_pattern: taskData.anchorPattern || null,
+          anchor_day: taskData.anchorDay || null,
           category_id: taskData.categoryId || null,
           first_due_date: taskData.firstDueDate,
           last_completed: taskData.lastCompleted || null,
@@ -137,8 +159,24 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       if (!user) return;
 
       const nextDue = task.lastCompleted
-        ? calculateNextDue(task.lastCompleted, task.frequency, task.customIntervalDays)
-        : task.firstDueDate;
+        ? calculateNextDue(
+            task.lastCompleted,
+            task.frequency,
+            task.scheduleType,
+            task.customIntervalDays,
+            task.anchorPattern,
+            task.anchorDay
+          )
+        : task.scheduleType === 'calendar' && task.anchorPattern
+          ? calculateNextDue(
+              getTodayString(),
+              task.frequency,
+              task.scheduleType,
+              task.customIntervalDays,
+              task.anchorPattern,
+              task.anchorDay
+            )
+          : task.firstDueDate;
 
       const { data, error } = await supabase
         .from('tasks')
@@ -147,6 +185,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           description: task.description || null,
           frequency: task.frequency,
           custom_interval_days: task.customIntervalDays || null,
+          schedule_type: task.scheduleType,
+          anchor_pattern: task.anchorPattern || null,
+          anchor_day: task.anchorDay || null,
           category_id: task.categoryId || null,
           first_due_date: task.firstDueDate,
           last_completed: task.lastCompleted || null,
@@ -186,7 +227,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       if (!task) throw new Error('Task not found');
 
       const dateUsed = completedAt || getTodayString();
-      const nextDue = calculateNextDue(dateUsed, task.frequency, task.customIntervalDays);
+      const nextDue = calculateNextDue(
+        dateUsed,
+        task.frequency,
+        task.scheduleType,
+        task.customIntervalDays,
+        task.anchorPattern,
+        task.anchorDay
+      );
 
       // Insert completion record
       const { data: recordData, error: recordError } = await supabase
@@ -252,8 +300,24 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
       const mostRecentCompletion = taskRecords[0]?.completedAt;
       const nextDue = mostRecentCompletion
-        ? calculateNextDue(mostRecentCompletion, task.frequency, task.customIntervalDays)
-        : task.firstDueDate;
+        ? calculateNextDue(
+            mostRecentCompletion,
+            task.frequency,
+            task.scheduleType,
+            task.customIntervalDays,
+            task.anchorPattern,
+            task.anchorDay
+          )
+        : task.scheduleType === 'calendar' && task.anchorPattern
+          ? calculateNextDue(
+              getTodayString(),
+              task.frequency,
+              task.scheduleType,
+              task.customIntervalDays,
+              task.anchorPattern,
+              task.anchorDay
+            )
+          : task.firstDueDate;
 
       // Update task
       const { error: updateError } = await supabase

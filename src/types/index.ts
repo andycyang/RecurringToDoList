@@ -8,12 +8,19 @@ export type Frequency =
   | 'annually'
   | 'custom';
 
+export type ScheduleType = 'interval' | 'calendar';
+
+export type AnchorPattern = 'quarterly_end' | 'monthly_day' | 'yearly_date';
+
 export interface Task {
   id: string;
   name: string;
   description?: string;
   frequency: Frequency;
   customIntervalDays?: number;
+  scheduleType: ScheduleType;
+  anchorPattern?: AnchorPattern;
+  anchorDay?: number; // day of month (1-31) or encoded as MMDD for yearly
   categoryId?: string;
   firstDueDate: string;
   lastCompleted?: string;
@@ -55,4 +62,15 @@ export const FREQUENCY_LABELS: Record<Frequency, string> = {
   semiannually: 'Every 6 months',
   annually: 'Annually',
   custom: 'Custom',
+};
+
+export const SCHEDULE_TYPE_LABELS: Record<ScheduleType, string> = {
+  interval: 'From completion date',
+  calendar: 'Fixed calendar date',
+};
+
+export const ANCHOR_PATTERN_LABELS: Record<AnchorPattern, string> = {
+  quarterly_end: 'End of quarter',
+  monthly_day: 'Day of month',
+  yearly_date: 'Same date each year',
 };
