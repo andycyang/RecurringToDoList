@@ -10,7 +10,7 @@ export type Frequency =
 
 export type ScheduleType = 'interval' | 'calendar';
 
-export type AnchorPattern = 'quarterly_end' | 'monthly_day' | 'yearly_date';
+export type AnchorPattern = 'quarterly_end' | 'semiannual_end' | 'monthly_day' | 'yearly_date';
 
 export interface Task {
   id: string;
@@ -71,6 +71,7 @@ export const SCHEDULE_TYPE_LABELS: Record<ScheduleType, string> = {
 
 export const ANCHOR_PATTERN_LABELS: Record<AnchorPattern, string> = {
   quarterly_end: 'End of quarter',
+  semiannual_end: 'End of half year',
   monthly_day: 'Day of month',
   yearly_date: 'Same date each year',
 };

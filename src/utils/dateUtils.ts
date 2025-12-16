@@ -70,6 +70,22 @@ export function calculateCalendarNextDue(
       return toDateString(endOfQuarter(addMonths(today, 3)));
     }
 
+    case 'semiannual_end': {
+      // Find the next half-year end (Jun 30 or Dec 31)
+      const year = today.getFullYear();
+      const jun30 = new Date(year, 5, 30); // June 30
+      const dec31 = new Date(year, 11, 31); // December 31
+
+      if (isAfter(jun30, today)) {
+        return toDateString(jun30);
+      }
+      if (isAfter(dec31, today)) {
+        return toDateString(dec31);
+      }
+      // Move to next year's June 30
+      return toDateString(new Date(year + 1, 5, 30));
+    }
+
     case 'monthly_day': {
       // Find the next occurrence of this day of month
       const day = anchorDay || 1;
